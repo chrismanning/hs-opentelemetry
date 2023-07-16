@@ -30,8 +30,8 @@
  their telemetry data.
 -}
 module OpenTelemetry.Exporter.OTLP (
-  -- * Initializing the exporter
-  otlpExporter,
+  -- * Initializing the trace exporter
+  otlpTraceExporter,
 
   -- * Configuring the exporter
   OTLPExporterConfig (..),
@@ -121,7 +121,9 @@ data OTLPExporterConfig = OTLPExporterConfig
   , otlpTimeout :: Maybe Int
   -- ^ Measured in seconds
   , otlpTracesTimeout :: Maybe Int
+  -- ^ Measured in seconds
   , otlpMetricsTimeout :: Maybe Int
+  -- ^ Measured in seconds
   , otlpProtocol :: Maybe Protocol
   , otlpTracesProtocol :: Maybe Protocol
   , otlpMetricsProtocol :: Maybe Protocol
@@ -141,38 +143,14 @@ loadExporterEnvironmentVariables = liftIO $ do
     <*> lookupEnv "OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE"
     <*> lookupEnv "OTEL_EXPORTER_OTLP_METRICS_CERTIFICATE"
     <*> (fmap decodeHeaders <$> lookupEnv "OTEL_EXPORTER_OTLP_HEADERS")
-    <*>
-    -- TODO lookupEnv "OTEL_EXPORTER_OTLP_TRACES_HEADERS" <*>
-    pure Nothing
-    <*>
-    -- TODO lookupEnv "OTEL_EXPORTER_OTLP_METRICS_HEADERS" <*>
-    pure Nothing
-    <*>
-    -- TODO lookupEnv  <*>
-    ( fmap
-        ( \case
-            "gzip" -> GZip
-            "none" -> None
-            -- TODO
-            _ -> None
-        )
-        <$> lookupEnv "OTEL_EXPORTER_OTLP_COMPRESSION"
-    )
-    <*>
-    -- TODO lookupEnv "OTEL_EXPORTER_OTLP_TRACES_COMPRESSION" <*>
-    pure Nothing
-    <*>
-    -- TODO lookupEnv "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION" <*>
-    pure Nothing
-    <*>
-    -- TODO lookupEnv "OTEL_EXPORTER_OTLP_TIMEOUT" <*>
-    pure Nothing
-    <*>
-    -- TODO lookupEnv "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT" <*>
-    pure Nothing
-    <*>
-    -- TODO lookupEnv "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT" <*>
-    pure Nothing
+    <*> (fmap decodeHeaders <$> lookupEnv "OTEL_EXPORTER_OTLP_TRACES_HEADERS")
+    <*> (fmap decodeHeaders <$> lookupEnv "OTEL_EXPORTER_OTLP_METRICS_HEADERS")
+    <*> (fmap parseCompression <$> lookupEnv "OTEL_EXPORTER_OTLP_COMPRESSION")
+    <*> (fmap parseCompression <$> lookupEnv "OTEL_EXPORTER_OTLP_TRACES_COMPRESSION")
+    <*> (fmap parseCompression <$> lookupEnv "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION")
+    <*> ((>>= readMaybe) <$> lookupEnv "OTEL_EXPORTER_OTLP_TIMEOUT")
+    <*> ((>>= readMaybe) <$> lookupEnv "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT")
+    <*> ((>>= readMaybe) <$> lookupEnv "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT")
     <*>
     -- TODO lookupEnv "OTEL_EXPORTER_OTLP_PROTOCOL" <*>
     pure Nothing
@@ -187,18 +165,22 @@ loadExporterEnvironmentVariables = liftIO $ do
       Left _ -> mempty
       Right baggageFmt ->
         (\(k, v) -> (CI.mk $ Baggage.tokenValue k, T.encodeUtf8 $ Baggage.value v)) <$> H.toList (Baggage.values baggageFmt)
+    parseCompression "gzip" = GZip
+    parseCompression "none" = None
+    parseCompression _ = None
 
 
 protobufMimeType :: C.ByteString
 protobufMimeType = "application/x-protobuf"
 
 
--- | Initial the OTLP 'Exporter'
-otlpExporter :: (MonadIO m) => OTLPExporterConfig -> m (Exporter OT.ImmutableSpan)
-otlpExporter conf = do
+-- | Initialise the OTLP 'Exporter' for Traces
+otlpTraceExporter :: (MonadIO m) => OTLPExporterConfig -> m (Exporter OT.ImmutableSpan)
+otlpTraceExporter conf = do
   -- TODO, url parsing is janky
   -- TODO configurable retryDelay, maximum retry counts
-  req <- liftIO $ parseRequest (maybe "http://localhost:4318/v1/traces" (<> "/v1/traces") (otlpEndpoint conf))
+  let endpoint = fromMaybe (maybe (C.unpack otlpExporterHttpEndpoint <> "/v1/traces") (<> "/v1/traces") (otlpEndpoint conf)) (otlpTracesEndpoint conf)
+  req <- liftIO $ parseRequest endpoint
 
   let (encodingHeader, encoder) =
         maybe
@@ -220,6 +202,7 @@ otlpExporter conf = do
         req
           { method = "POST"
           , requestHeaders = baseReqHeaders
+          , responseTimeout = fromMaybe responseTimeoutDefault ((responseTimeoutMicro . (* 1_000_000)) <$> (otlpTracesTimeout conf <|> otlpTimeout conf))
           }
   pure $
     Exporter

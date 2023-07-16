@@ -161,7 +161,7 @@ import OpenTelemetry.Baggage (decodeBaggageHeader)
 import qualified OpenTelemetry.Baggage as Baggage
 import OpenTelemetry.Context (Context)
 import OpenTelemetry.Exporter (Exporter)
-import OpenTelemetry.Exporter.OTLP (loadExporterEnvironmentVariables, otlpExporter)
+import OpenTelemetry.Exporter.OTLP (loadExporterEnvironmentVariables, otlpTraceExporter)
 import OpenTelemetry.Processor (Processor)
 import OpenTelemetry.Processor.Batch (BatchTimeoutConfig (..), batchProcessor, batchTimeoutConfig)
 import OpenTelemetry.Propagator (Propagator)
@@ -447,7 +447,7 @@ knownExporters =
     ( "otlp"
     , do
         otlpConfig <- loadExporterEnvironmentVariables
-        otlpExporter otlpConfig
+        otlpTraceExporter otlpConfig
     )
   , ("jaeger", error "Jaeger exporter not implemented")
   , ("zipkin", error "Zipkin exporter not implemented")
